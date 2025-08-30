@@ -102,18 +102,21 @@ else
 end
 
 
+-- ngx.header元表的__newindex方法， 用于设置响应头
 local function set_resp_header(tb, key, value, no_override)
     local r = get_request()
     if not r then
         error("no request found")
     end
 
+    -- key转为string
     if type(key) ~= "string" then
         key = tostring(key)
     end
 
     local rc
     if value == nil then
+        -- 表示要清空此响应头
         if no_override then
             error("invalid header value", 3)
         end
@@ -123,14 +126,19 @@ local function set_resp_header(tb, key, value, no_override)
     else
         local sval, sval_len, mvals, mvals_len, buf
 
+        -- 要设置多个值
         if type(value) == "table" then
+            -- 将table转成c层的结构体
             mvals_len = #value
             if mvals_len == 0 and no_override then
                 return
             end
 
+            -- 申请用于存放值的空间
             buf = get_string_buf(ffi_str_size * mvals_len)
+            -- 转为 ngx_http_lua_ffi_str_t *
             mvals = ffi_cast(ffi_str_type, buf)
+            -- 将value设置到mvals中
             for i = 1, mvals_len do
                 local s = value[i]
                 if type(s) ~= "string" then
@@ -145,6 +153,7 @@ local function set_resp_header(tb, key, value, no_override)
             sval_len = 0
 
         else
+            -- string
             if type(value) ~= "string" then
                 sval = tostring(value)
             else
@@ -156,6 +165,7 @@ local function set_resp_header(tb, key, value, no_override)
         end
 
         local override_int = no_override and 0 or 1
+        -- 调用c层函数设置值
         rc = ngx_lua_ffi_set_resp_header(r, key, #key, false, sval,
                                          sval_len, mvals, mvals_len,
                                          override_int, errmsg)
@@ -181,6 +191,7 @@ end
 _M.set_resp_header = set_resp_header
 
 
+-- ngx.header元表的__index方法。用于读取响应头
 local function get_resp_header(tb, key)
     local r = get_request()
     if not r then
@@ -193,6 +204,7 @@ local function get_resp_header(tb, key)
 
     local key_len = #key
 
+    -- key_buf 用于存储header的key和value
     local key_buf = get_string_buf(key_len + ffi_str_size * MAX_HEADER_VALUES)
     local values = ffi_cast(ffi_str_type, key_buf + key_len)
     local n = C.ngx_http_lua_ffi_get_resp_header(r, key, key_len, key_buf,
@@ -228,6 +240,7 @@ local function get_resp_header(tb, key)
 end
 
 
+-- syntax: ngx_resp.bypass_if_checks()
 local function bypass_if_checks()
     local r = get_request()
     if not r then
@@ -245,6 +258,7 @@ do
     mt.__newindex = set_resp_header
     mt.__index = get_resp_header
 
+    -- 注入api ngx.header
     ngx.header = setmetatable(new_tab(0, 0), mt)
 end
 

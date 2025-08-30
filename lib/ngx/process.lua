@@ -30,9 +30,13 @@ local process_type_names = {
 local C = ffi.C
 local _M = { version = base.version }
 
+-- C.ngx_http_lua_ffi_enable_privileged_agent
 local ngx_lua_ffi_enable_privileged_agent
+-- C.ngx_http_lua_ffi_get_process_type
 local ngx_lua_ffi_get_process_type
+-- C.ngx_http_lua_ffi_process_signal_graceful_exit
 local ngx_lua_ffi_process_signal_graceful_exit
+-- C.ngx_http_lua_ffi_master_pid
 local ngx_lua_ffi_master_pid
 
 if subsystem == 'http' then
@@ -69,12 +73,16 @@ else
 end
 
 
+-- syntax: type_name = process_module.type()
 function _M.type()
+    -- C.ngx_http_lua_ffi_get_process_type
     local typ = ngx_lua_ffi_get_process_type()
     return process_type_names[tonumber(typ)]
 end
 
 
+-- syntax: ok, err = process_module.enable_privileged_agent(connections)
+-- connections: sets the maximum number of simultaneous connections that can be opened by privileged agent process.
 function _M.enable_privileged_agent(connections)
     if ngx_phase() ~= "init" then
         return nil, "API disabled in the current context"
@@ -87,6 +95,7 @@ function _M.enable_privileged_agent(connections)
             "number expected and greater than 0"
     end
 
+    -- C.ngx_http_lua_ffi_enable_privileged_agent
     local rc = ngx_lua_ffi_enable_privileged_agent(errmsg, connections)
 
     if rc == FFI_ERROR then
@@ -97,11 +106,13 @@ function _M.enable_privileged_agent(connections)
 end
 
 
+-- syntax: process_module.signal_graceful_exit()
 function _M.signal_graceful_exit()
     ngx_lua_ffi_process_signal_graceful_exit()
 end
 
 
+-- syntax: pid = process_module.get_master_pid()
 function _M.get_master_pid()
     local pid = ngx_lua_ffi_master_pid()
     if pid == FFI_ERROR then

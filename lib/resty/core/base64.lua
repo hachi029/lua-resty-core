@@ -56,12 +56,14 @@ end
 
 
 
+-- 计算base64后的长度
 local function base64_encoded_length(len, no_padding)
     return no_padding and floor((len * 8 + 5) / 6) or
            floor((len + 2) / 3) * 4
 end
 
 
+-- syntax: newstr = ngx.encode_base64(str, no_padding?)
 ngx.encode_base64 = function (s, no_padding)
     if type(s) ~= 'string' then
         if not s then
@@ -85,6 +87,7 @@ ngx.encode_base64 = function (s, no_padding)
         no_padding_int  = 1;
     end
 
+    -- 计算base64后的长度
     local dlen = base64_encoded_length(slen, no_padding_bool)
     local dst = get_string_buf(dlen)
     local r_dlen = ngx_lua_ffi_encode_base64(s, slen, dst, no_padding_int)

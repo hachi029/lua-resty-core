@@ -64,6 +64,7 @@ do
     local in_ssl_phase = ffi.new("int[1]")
     local ssl_ctx_ref = ffi.new("int[1]")
 
+    -- 返回ngx.ctx。 ctx应该是nil
     function get_ctx_table(ctx)
         local r = get_request()
 
@@ -71,11 +72,13 @@ do
             error("no request found")
         end
 
+        -- 获取ctx在本文件ctxs中的索引，这个索引存储在ngx_http_lua_ctx_t的ctx_ref中
         local ctx_ref = ngx_lua_ffi_get_ctx_ref(r, in_ssl_phase, ssl_ctx_ref)
         if ctx_ref == FFI_NO_REQ_CTX then
             error("no request ctx found")
         end
 
+        -- 小于0表示还没有创建
         if ctx_ref < 0 then
             ctx_ref = ssl_ctx_ref[0]
             if ctx_ref > 0 and ctxs[ctx_ref] then
@@ -104,6 +107,7 @@ do
                 end
             end
 
+            --将ctx放入ctxs数组中，返回在数组中的index
             ctx_ref = ref_in_table(ctxs, ctx)
             if ngx_lua_ffi_set_ctx_ref(r, ctx_ref) ~= FFI_OK then
                 return nil
@@ -113,6 +117,7 @@ do
         return ctxs[ctx_ref]
     end
 end
+-- 参考ngx的元表__index方法
 register_getter("ctx", get_ctx_table)
 _M.get_ctx_table = get_ctx_table
 

@@ -65,14 +65,18 @@ local value_ptr = ffi_new("unsigned char *[1]")
 local errmsg = base.get_errmsg_ptr()
 
 
+-- ngx.var.VAR_NAME 获取变量名
+-- ngx.var[1] 获取捕获变量名 $1 $2...
 local function var_get(self, name)
     local r = get_request()
     if not r then
         error("no request found")
     end
 
+    -- 一个size_t指针的长度
     local value_len = get_size_ptr()
     local rc
+    -- ngx.var[1]， 正则表达式的匹配组$1 $2
     if type(name) == "number" then
         rc = ngx_lua_ffi_var_get(r, nil, 0, nil, name, value_ptr, value_len,
                                  errmsg)
@@ -83,8 +87,10 @@ local function var_get(self, name)
         end
 
         local name_len = #name
+        -- 获取一个字符串缓存，用于存放小写的name
         local lowcase_buf = get_string_buf(name_len)
 
+        -- 使用小写的name,调用ngx_http_get_variable(r, &name, hash);
         rc = ngx_lua_ffi_var_get(r, name, name_len, lowcase_buf, 0, value_ptr,
                                  value_len, errmsg)
     end
@@ -105,12 +111,14 @@ local function var_get(self, name)
 end
 
 
+-- ngx.var.VAR_NAME = xxx
 local function var_set(self, name, value)
     local r = get_request()
     if not r then
         error("no request found")
     end
 
+    -- name必须为string
     if type(name) ~= "string" then
         error("bad variable name", 2)
     end
@@ -118,8 +126,10 @@ local function var_set(self, name, value)
 
     local errlen = get_size_ptr()
     errlen[0] = ERR_BUF_SIZE
+    -- 用于存放小写的name和error_msg
     local lowcase_buf = get_string_buf(name_len + ERR_BUF_SIZE)
 
+    -- value的长度
     local value_len
     if value == nil then
         value_len = 0
@@ -147,6 +157,7 @@ end
 
 
 do
+    -- ngx.var.VAR_NAME
     local mt = new_tab(0, 2)
     mt.__index = var_get
     mt.__newindex = var_set

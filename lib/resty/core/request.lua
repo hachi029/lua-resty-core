@@ -56,7 +56,7 @@ elseif subsystem == "http" then
     ngx_lua_ffi_req_start_time = C.ngx_http_lua_ffi_req_start_time
 end
 
-
+-- ngx.req.start_time
 function ngx.req.start_time()
     local r = get_request()
     if not r then
@@ -134,6 +134,7 @@ local table_elt_type = ffi.typeof("ngx_http_lua_ffi_table_elt_t*")
 local table_elt_size = ffi.sizeof("ngx_http_lua_ffi_table_elt_t")
 local truncated = ffi.new("int[1]")
 
+-- header key 大小转小写， _转-
 local req_headers_mt = {
     __index = function (tb, key)
         key = lower(key)
@@ -146,6 +147,9 @@ local req_headers_mt = {
 }
 
 
+-- https://openresty-reference.readthedocs.io/en/latest/Lua_Nginx_API/#ngxreqget_headers
+-- syntax: headers = ngx.req.get_headers(max_headers?, raw?)
+-- raw 默认为0， 即将header name转为小写
 function ngx.req.get_headers(max_headers, raw)
     local r = get_request()
     if not r then
@@ -162,6 +166,7 @@ function ngx.req.get_headers(max_headers, raw)
         raw = 1
     end
 
+    -- 获取请求头个数
     local n = C.ngx_http_lua_ffi_req_get_headers_count(r, max_headers,
                                                        truncated)
     if n == FFI_BAD_CONTEXT then
@@ -170,7 +175,7 @@ function ngx.req.get_headers(max_headers, raw)
 
     if n == 0 then
         local headers = {}
-        if raw == 0 then
+        if raw == 0 then    -- header name转为小写返回, _转-
             headers = setmetatable(headers, req_headers_mt)
         end
 
@@ -180,18 +185,23 @@ function ngx.req.get_headers(max_headers, raw)
     local raw_buf = get_string_buf(n * table_elt_size)
     local buf = ffi_cast(table_elt_type, raw_buf)
 
+    -- 读取请求头
     local rc = C.ngx_http_lua_ffi_req_get_headers(r, buf, n, raw)
     if rc == 0 then
+        -- 读取成功， 将buf转为lua table
         local headers = new_tab(0, n)
         for i = 0, n - 1 do
             local h = buf[i]
 
+            -- key
             local key = h.key
             key = ffi_str(key.data, key.len)
 
+            -- value
             local value = h.value
             value = ffi_str(value.data, value.len)
 
+            -- 相同的key 转为 array
             local existing = headers[key]
             if existing then
                 if type(existing) == "table" then
@@ -220,6 +230,7 @@ function ngx.req.get_headers(max_headers, raw)
 end
 
 
+-- ngx.req.get_uri_args
 function ngx.req.get_uri_args(max_args, tab)
     local r = get_request()
     if not r then
@@ -234,15 +245,18 @@ function ngx.req.get_uri_args(max_args, tab)
         clear_tab(tab)
     end
 
+    -- 获取uri 查询参数个数， 用于预设置table的初始大小
     local n = C.ngx_http_lua_ffi_req_get_uri_args_count(r, max_args, truncated)
     if n == FFI_BAD_CONTEXT then
         error("API disabled in the current context", 2)
     end
 
+    -- 没有参数
     if n == 0 then
         return tab or {}
     end
 
+    -- r->args.len, 用于预分配内存
     local args_len = C.ngx_http_lua_ffi_req_get_querystring_len(r)
 
     local strbuf = get_string_buf(args_len + n * table_elt_size)
@@ -250,6 +264,8 @@ function ngx.req.get_uri_args(max_args, tab)
 
     local nargs = C.ngx_http_lua_ffi_req_get_uri_args(r, strbuf, kvbuf, n)
 
+    -- 将strbuf转为lua table
+    -- 创建一个nargs大小的表
     local args = tab or new_tab(0, nargs)
     for i = 0, nargs - 1 do
         local arg = kvbuf[i]
@@ -265,6 +281,7 @@ function ngx.req.get_uri_args(max_args, tab)
             value = ffi_str(value.data, len)
         end
 
+        -- 相同key元素是否已经存在，已存在则构建table
         local existing = args[key]
         if existing then
             if type(existing) == "table" then
@@ -307,6 +324,7 @@ do
 
     local namep = ffi_new("unsigned char *[1]")
 
+    -- ngx.req.get_method
     function ngx.req.get_method()
         local r = get_request()
         if not r then
@@ -336,12 +354,14 @@ do
 end  -- do
 
 
+-- ngx.req.set_method method为整数格式的id
 function ngx.req.set_method(method)
     local r = get_request()
     if not r then
         error("no request found")
     end
 
+    -- 必须为number
     if type(method) ~= "number" then
         error("bad method number", 2)
     end
@@ -364,6 +384,7 @@ end
 
 
 do
+    -- ngx.req.set_header. override 为true
     local function set_req_header(name, value, override)
         local r = get_request()
         if not r then
@@ -380,6 +401,7 @@ do
 
         local rc
 
+        -- 表示要移除header
         if value == nil then
             if not override then
                 error("bad 'value' argument: string or table expected, got nil",
@@ -393,12 +415,14 @@ do
             local sval, sval_len, mvals, mvals_len, buf
             local value_type = type(value)
 
+            -- 设置多值header
             if value_type == "table" then
                 mvals_len = #value
                 if mvals_len == 0 and not override then
                     error("bad 'value' argument: non-empty table expected", 3)
                 end
 
+                -- 将table转为c层的数组 ngx_http_lua_ffi_str_t *
                 buf = get_string_buf(ffi_str_size * mvals_len)
                 mvals = ffi_cast(ffi_str_type, buf)
 
@@ -414,6 +438,7 @@ do
                     str.len = #s
                 end
 
+                -- 标识单值长度为0
                 sval_len = 0
 
             else
@@ -424,6 +449,7 @@ do
                 end
 
                 sval_len = #sval
+                -- 标识多值长度为0
                 mvals_len = 0
             end
 
@@ -448,12 +474,14 @@ do
     _M.set_req_header = set_req_header
 
 
+    -- ngx.req.set_header
     function ngx.req.set_header(name, value)
         set_req_header(name, value, true) -- override
     end
 end  -- do
 
 
+-- ngx.req.clear_header
 function ngx.req.clear_header(name)
     local r = get_request()
     if not r then
@@ -464,6 +492,7 @@ function ngx.req.clear_header(name)
         name = tostring(name)
     end
 
+    -- 调用set_header方法。 值为null
     local rc = C.ngx_http_lua_ffi_req_set_header(r, name, #name, nil, 0, nil, 0,
                                                  1, errmsg)
 

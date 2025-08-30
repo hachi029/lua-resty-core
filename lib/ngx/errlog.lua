@@ -22,9 +22,13 @@ local error = error
 local subsystem = ngx.config.subsystem
 
 
+-- C.ngx_http_lua_ffi_errlog_set_filter_level
 local ngx_lua_ffi_errlog_set_filter_level
+-- C.ngx_http_lua_ffi_errlog_get_msg
 local ngx_lua_ffi_errlog_get_msg
+-- C.ngx_http_lua_ffi_errlog_get_sys_filter_level
 local ngx_lua_ffi_errlog_get_sys_filter_level
+-- C.ngx_http_lua_ffi_raw_log
 local ngx_lua_ffi_raw_log
 
 
@@ -77,6 +81,7 @@ local ERR_BUF_SIZE = 128
 local FFI_ERROR = base.FFI_ERROR
 
 
+-- syntax: status, err = log_module.set_filter_level(log_level)
 function _M.set_filter_level(level)
     if not level then
         return nil, [[missing "level" argument]]
@@ -95,6 +100,9 @@ function _M.set_filter_level(level)
 end
 
 
+-- syntax: res, err = log_module.get_logs(max?, res?)
+-- max: 本次调用最多返回的日志数量
+-- logs: a user-supplied Lua table to hold the result instead of creating a brand new table
 function _M.get_logs(max, logs)
     local err = get_string_buf(ERR_BUF_SIZE)
     local errlen = get_size_ptr()
@@ -142,12 +150,14 @@ function _M.get_logs(max, logs)
 end
 
 
+-- syntax: log_level = log_module.get_sys_filter_level()
 function _M.get_sys_filter_level()
     local r = get_request()
     return tonumber(ngx_lua_ffi_errlog_get_sys_filter_level(r))
 end
 
 
+-- syntax: log_module.raw_log(log_level, msg)
 function _M.raw_log(level, msg)
     if type(level) ~= "number" then
         error("bad argument #1 to 'raw_log' (must be a number)", 2)

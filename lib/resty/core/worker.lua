@@ -13,11 +13,15 @@ local subsystem = ngx.config.subsystem
 local get_string_buf = base.get_string_buf
 local get_size_ptr = base.get_size_ptr
 
-
+-- C.ngx_http_lua_ffi_worker_id
 local ngx_lua_ffi_worker_id
+-- C.ngx_http_lua_ffi_worker_pid
 local ngx_lua_ffi_worker_pid
+-- C.ngx_http_lua_ffi_worker_pids
 local ngx_lua_ffi_worker_pids
+-- C.ngx_http_lua_ffi_worker_count
 local ngx_lua_ffi_worker_count
+-- C.ngx_http_lua_ffi_worker_exiting
 local ngx_lua_ffi_worker_exiting
 local ffi_intp_type = ffi.typeof("int *")
 local ffi_int_size = ffi.sizeof("int")
@@ -62,11 +66,13 @@ elseif subsystem == "stream" then
 end
 
 
+-- syntax: exiting = ngx.worker.exiting()
 function ngx.worker.exiting()
     return ngx_lua_ffi_worker_exiting() ~= 0
 end
 
 
+-- syntax: id = ngx.worker.id()
 function ngx.worker.pid()
     return ngx_lua_ffi_worker_pid()
 end
@@ -93,6 +99,7 @@ if is_not_windows then
     local tonumber = tonumber
     local ngx_phase = ngx.get_phase
 
+    -- syntax: pids = ngx.worker.pids()
     function ngx.worker.pids()
         local phase = ngx_phase()
         if phase == "init" or phase == "init_worker" then
@@ -123,6 +130,7 @@ if is_not_windows then
 end
 
 
+-- syntax: id = ngx.worker.id()
 function ngx.worker.id()
     local id = ngx_lua_ffi_worker_id()
     if id < 0 then

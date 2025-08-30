@@ -29,11 +29,17 @@ local subsystem = ngx.config.subsystem
 
 
 local errmsg = base.get_errmsg_ptr()
+-- ffi_new("ngx_http_lua_sema_t *[1]")
 local psem
+-- C.ngx_http_lua_ffi_sema_new
 local ngx_lua_ffi_sema_new
+-- C.ngx_http_lua_ffi_sema_post
 local ngx_lua_ffi_sema_post
+-- C.ngx_http_lua_ffi_sema_count
 local ngx_lua_ffi_sema_count
+-- C.ngx_http_lua_ffi_sema_wait
 local ngx_lua_ffi_sema_wait
+-- C.ngx_http_lua_ffi_sema_gc
 local ngx_lua_ffi_sema_gc
 
 
@@ -97,6 +103,7 @@ local _M = { version = base.version }
 local mt = { __index = _M }
 
 
+-- syntax: sema, err = semaphore_module.new(n?)
 function _M.new(n)
     n = tonumber(n) or 0
     if n < 0 then
@@ -110,12 +117,14 @@ function _M.new(n)
 
     local sem = psem[0]
 
+    -- 绑定 gc 函数，在 sem 被释放时，调用 gc 函数。
     ffi_gc(sem, ngx_lua_ffi_sema_gc)
 
     return setmetatable({ sem = sem }, mt)
 end
 
 
+-- syntax: ok, err = sema:wait(timeout)
 function _M.wait(self, seconds)
     if type(self) ~= "table" or type(self.sem) ~= "cdata" then
         error("not a semaphore instance", 2)
@@ -152,16 +161,20 @@ function _M.wait(self, seconds)
         return nil, "timeout"
     end
 
+    -- ret == NGX_AGAIN
+
     -- Note: we cannot use the tail-call form here since we
     -- might need the current function call's activation
     -- record to hold the reference to our semaphore object
     -- to prevent it from getting GC'd prematurely.
+    -- 不能在这里使用尾调用形式，因为可能需要当前函数调用的激活记录来保存对信号量对象的引用，以防止它过早地被 GC 处理
     local ok
     ok, err = co_yield()
     return ok, err
 end
 
 
+-- syntax: sema:post(n?)
 function _M.post(self, n)
     if type(self) ~= "table" or type(self.sem) ~= "cdata" then
         error("not a semaphore instance", 2)
@@ -169,6 +182,7 @@ function _M.post(self, n)
 
     local cdata_sem = self.sem
 
+    -- 默认为1
     local num = n and tonumber(n) or 1
     if num < 1 then
         error("positive number required", 2)

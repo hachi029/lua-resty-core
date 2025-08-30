@@ -11,6 +11,7 @@ if subsystem == 'http' then
     require "resty.core.phase"  -- for ngx.get_phase
 end
 
+-- https://github.com/openresty/lua-resty-lrucache
 local lrucache = require "resty.lrucache"
 
 local lrucache_get = lrucache.get
@@ -106,19 +107,30 @@ local PCRE_JAVASCRIPT_COMPAT = 0x2000000
 local PCRE_ERROR_NOMATCH = -1
 
 
+-- 一个 max_regex_cache_size 大小的lrucache，用于缓存正则表达式编译结果
 local regex_match_cache
+-- 用于ngx.re.sub中replace为func的场景
+-- key为编译选项, value为一个table， 其key为原始的正则表达式，value为正则表达式编译结果
 local regex_sub_func_cache = new_tab(0, 4)
+-- 用于ngx.re.sub中replace为string的场景
+-- key为编译选项, value为一个table， 其key为原始的正则表达式，value为正则表达式编译结果
 local regex_sub_str_cache = new_tab(0, 4)
+-- lua_regex_cache_max_entries 配置指令值
 local max_regex_cache_size
 local regex_cache_size = 0
 local script_engine
+-- C.ngx_http_lua_ffi_max_regex_cache_size，获取正则表达式编译结果缓存大小
 local ngx_lua_ffi_max_regex_cache_size
+-- C.ngx_http_lua_ffi_destroy_regex， 销毁正则表达式编译结果
 local ngx_lua_ffi_destroy_regex
+--  C.ngx_http_lua_ffi_compile_regex，编译正则表达式
 local ngx_lua_ffi_compile_regex
+-- C.ngx_http_lua_ffi_exec_regex, 执行正则匹配
 local ngx_lua_ffi_exec_regex
 local ngx_lua_ffi_create_script_engine
 local ngx_lua_ffi_destroy_script_engine
 local ngx_lua_ffi_init_script_engine
+-- C.ngx_http_lua_ffi_compile_replace_template
 local ngx_lua_ffi_compile_replace_template
 local ngx_lua_ffi_script_eval_len
 local ngx_lua_ffi_script_eval_data
@@ -335,6 +347,7 @@ end
 
 local c_str_type = ffi.typeof("const char *")
 
+-- 正则编译选项的缓存表，key为编译选项如"ijo", value为{flags, pcre_opts}
 local cached_re_opts = new_tab(0, 4)
 
 local buf_grow_ratio = 2
@@ -345,6 +358,8 @@ function _M.set_buf_grow_ratio(ratio)
 end
 
 
+-- https://openresty-reference.readthedocs.io/en/latest/Directives/#lua_regex_cache_max_entries
+-- 返回 lua_regex_cache_max_entries 配置指令值
 local function get_max_regex_cache_size()
     if max_regex_cache_size then
         return max_regex_cache_size
@@ -368,9 +383,14 @@ local function lrucache_set_wrapper(...)
 end
 
 
+-- https://openresty-reference.readthedocs.io/en/latest/Lua_Nginx_API/#ngxrematch
+-- 正则匹配选项解析， 带缓存
+-- 解析结果 flags, pcre_opts
 local parse_regex_opts = function (opts)
+    -- 如果有解析后的缓存，直接返回. key为编译选项如 "ijo"
     local t = cached_re_opts[opts]
     if t then
+        -- flags, pcre_opts
         return t[1], t[2]
     end
 
@@ -502,6 +522,8 @@ if no_jit_in_init then
 end
 
 
+-- 收集命名捕获组结果
+-- 根据匹配结果中的name_count、name_table，从原始字符串中提取出捕获结果
 local function collect_named_captures(compiled, flags, res)
     local name_count = compiled.name_count
     local name_table = compiled.name_table
@@ -533,17 +555,22 @@ local function collect_named_captures(compiled, flags, res)
 end
 
 
+-- 收集捕获组结果
+-- 根据匹配结果中的ncaptures数组from和to，从原始字符串中提取出捕获结果
 local function collect_captures(compiled, rc, subj, flags, res)
     local cap = compiled.captures
     local ncap = compiled.ncaptures
     local name_count = compiled.name_count
 
+    -- res不为nil， 则使用用户传入的tab
     if not res then
+        -- 创建匹配结果数组
         res = new_tab(ncap, name_count)
     end
 
     local i = 0
     local n = 0
+    -- 遍历匹配组
     while i <= ncap do
         if i > rc then
             res[i] = false
@@ -551,6 +578,7 @@ local function collect_captures(compiled, rc, subj, flags, res)
             local from = cap[n]
             if from >= 0 then
                 local to = cap[n + 1]
+                -- 匹配组字符串
                 res[i] = sub(subj, from + 1, to)
             else
                 res[i] = false
@@ -560,6 +588,7 @@ local function collect_captures(compiled, rc, subj, flags, res)
         n = n + 2
     end
 
+    -- 如果存在命名捕获组
     if name_count > 0 then
         collect_named_captures(compiled, flags, res)
     end
@@ -571,6 +600,7 @@ end
 _M.collect_captures = collect_captures
 
 
+-- 销毁正则表达式编译结果compiled
 local function destroy_compiled_regex(compiled)
     ngx_lua_ffi_destroy_regex(ffi_gc(compiled, nil))
 end
@@ -579,30 +609,38 @@ end
 _M.destroy_compiled_regex = destroy_compiled_regex
 
 
+-- 编译正则表达式，如果有compile_once选项，则将编译结果放入lru缓存中。
 local function re_match_compile(regex, opts)
     local flags = 0
     local pcre_opts = 0
 
+    -- 解析编译选项
     if opts then
+        -- 解析编译选项， 带缓存
         flags, pcre_opts = parse_regex_opts(opts)
     else
         opts = ""
     end
 
     local compiled, key
+    -- o选项， to enable the worker-process-level compiled-regex cache
     local compile_once = (band(flags, FLAG_COMPILE_ONCE) == 1)
 
     -- FIXME: better put this in the outer scope when fixing the ngx.re API's
     -- compatibility in the init_by_lua* context.
+    -- 如果 regex_match_cache 还没创建，则进行初始化
     if not regex_match_cache then
+        -- 获取配置指令lua_regex_cache_max_entries的值
         local sz = get_max_regex_cache_size()
         if sz <= 0 then
             compile_once = false
         else
+            -- 创建一个sz大小的lrucache
             regex_match_cache = lrucache.new(sz)
         end
     end
 
+    -- 从缓存中获取已编译后的regex
     if compile_once then
         key = regex .. '\0' .. opts
         compiled = lrucache_get(regex_match_cache, key)
@@ -614,6 +652,7 @@ local function re_match_compile(regex, opts)
         -- print("compiled regex not found, compiling regex...")
         local errbuf = get_string_buf(MAX_ERR_MSG_LEN)
 
+        -- 类型为 ngx_http_lua_regex_t
         compiled = ngx_lua_ffi_compile_regex(regex, #regex, flags,
                                              pcre_opts, errbuf,
                                              MAX_ERR_MSG_LEN)
@@ -622,12 +661,14 @@ local function re_match_compile(regex, opts)
             return nil, ffi_string(errbuf)
         end
 
+        -- compiled上注册析构函数。当compiled被 Luajit GC 管理器垃圾回收时候，会自动调用注册的析构函数来执行 C 级别的内存释放
         ffi_gc(compiled, ngx_lua_ffi_destroy_regex)
 
         -- print("ncaptures: ", compiled.ncaptures)
 
         if compile_once then
             -- print("inserting compiled regex into cache")
+            -- 放入编译缓存中
             lrucache_set_wrapper(regex_match_cache, key, compiled)
         end
     end
@@ -639,11 +680,19 @@ end
 _M.re_match_compile = re_match_compile
 
 
+-- subj: 要匹配的字符串
+-- regex: 正则
+-- opts: 正则选项,常用选项 ijo， 大小写不敏感/启用PCRE JIT/启用compiled-regex cache
+-- ctx: ctx.pos=2. pos标记从subj的哪个位置开始匹配. 也作为返回参数ctx.pos标记匹配到的字符串结束位置
+-- want_caps: 是否需要返回捕获数组。如果为false，则必须要创建res数组，也不用创建捕获组子字符串，可以节约开销
+-- res: 提供用来存放匹配结果的表. res[1]、res[2]
+-- nth: 返回第几个捕获组
 local function re_match_helper(subj, regex, opts, ctx, want_caps, res, nth)
     -- we need to cast this to strings to avoid exceptions when they are
     -- something else.
     subj  = tostring(subj)
 
+    -- 编译正则表达式，如果有compile_once选项，则将编译结果放入lru缓存中。
     local compiled, compile_once, flags = re_match_compile(regex, opts)
     if compiled == nil then
         -- compiled_once holds the error string
@@ -657,6 +706,7 @@ local function re_match_helper(subj, regex, opts, ctx, want_caps, res, nth)
 
     local rc
     do
+        -- 获取pos参数
         local pos
         if ctx then
             pos = ctx.pos
@@ -670,16 +720,20 @@ local function re_match_helper(subj, regex, opts, ctx, want_caps, res, nth)
             pos = 0
         end
 
+        -- 执行正则匹配
         rc = ngx_lua_ffi_exec_regex(compiled, flags, subj, #subj, pos)
     end
 
+    -- 没有匹配到
     if rc == PCRE_ERROR_NOMATCH then
+        -- 如果没有compile_once选项，则立即销毁compiled
         if not compile_once then
             destroy_compiled_regex(compiled)
         end
         return nil
     end
 
+    -- 执行失败
     if rc < 0 then
         if not compile_once then
             destroy_compiled_regex(compiled)
@@ -708,11 +762,13 @@ local function re_match_helper(subj, regex, opts, ctx, want_caps, res, nth)
         ctx.pos = compiled.captures[1] + 1
     end
 
+    -- 不需要捕获结果
     if not want_caps then
         if not nth or nth < 0 then
             nth = 0
         end
 
+        -- 如果nth大于捕获组数量
         if nth > compiled.ncaptures then
             return nil, nil, "nth out of bound"
         end
@@ -721,6 +777,7 @@ local function re_match_helper(subj, regex, opts, ctx, want_caps, res, nth)
             return nil, nil
         end
 
+        -- 返回第n个捕获组在原始字符串中的起始位置
         local from = compiled.captures[nth * 2] + 1
         local to = compiled.captures[nth * 2 + 1]
 
@@ -731,6 +788,7 @@ local function re_match_helper(subj, regex, opts, ctx, want_caps, res, nth)
         return from, to
     end
 
+    -- 获取捕获组结果
     res = collect_captures(compiled, rc, subj, flags, res)
 
     if not compile_once then
@@ -741,11 +799,22 @@ local function re_match_helper(subj, regex, opts, ctx, want_caps, res, nth)
 end
 
 
+--  ngx.re.match   https://openresty-reference.readthedocs.io/en/latest/Lua_Nginx_API/#ngxrematch
+-- syntax: captures, err = ngx.re.match(subject, regex, options?, ctx?, res_table?)
+-- subj: 要匹配的字符串
+-- regex: 正则表达式
+-- opts: 正则选项,常用选项 "ijo"， 大小写不敏感/启用PCRE JIT/启用compiled-regex cache
+-- ctx: ctx.pos=2. pos标记从subj的哪个位置开始匹配. 也作为返回参数ctx.pos标记匹配到的字符串结束位置
+-- res: 由用户提供而不是方法内部新建一个用来存放匹配结果的表. res[1]、res[2]
+-- 返回为一个table res
 function ngx.re.match(subj, regex, opts, ctx, res)
     return re_match_helper(subj, regex, opts, ctx, true, res)
 end
 
 
+-- syntax: from, to, err = ngx.re.find(subject, regex, options?, ctx?, nth?)
+-- nth: 返回第nth个捕获组在原始字符串中的起始位置， 默认为0
+-- 返回 from, to, err
 function ngx.re.find(subj, regex, opts, ctx, nth)
     return re_match_helper(subj, regex, opts, ctx, false, nil, nth)
 end
@@ -762,11 +831,13 @@ do
     end
 
 
+    -- ngx.re.gmatch， 每次调用返回一组匹配结果
     local function iterate_re_gmatch(self)
         local compiled = self._compiled
         local subj = self._subj
         local subj_len = self._subj_len
         local flags = self._flags
+        -- 起始为0
         local pos = self._pos
 
         if not pos then
@@ -774,8 +845,10 @@ do
             return nil
         end
 
+        -- 执行正则匹配。pos指定了匹配起始位置
         local rc = ngx_lua_ffi_exec_regex(compiled, flags, subj, subj_len, pos)
 
+        -- 未命中
         if rc == PCRE_ERROR_NOMATCH then
             destroy_re_gmatch_iterator(self)
             return nil
@@ -804,6 +877,7 @@ do
                 return res
             end
         end
+        -- 更新pos为下次开始匹配的位置
         self._pos = cp_pos
         return collect_captures(compiled, rc, subj, flags)
     end
@@ -811,6 +885,7 @@ do
 
     local re_gmatch_iterator_mt = { __call = iterate_re_gmatch }
 
+    -- syntax: iterator, err = ngx.re.gmatch(subject, regex, options?)
     function ngx.re.gmatch(subj, regex, opts)
         subj  = tostring(subj)
 
@@ -866,11 +941,14 @@ end
 _M.check_buf_size = check_buf_size
 
 
+-- replace: string， ngx.re.sub传入的replace是string
+-- fun: function，ngx.re.sub传入的replace是function
 local function re_sub_compile(regex, opts, replace, func)
     local flags = 0
     local pcre_opts = 0
 
     if opts then
+        -- 解析编译选项
         flags, pcre_opts = parse_regex_opts(opts)
     else
         opts = ""
@@ -878,20 +956,28 @@ local function re_sub_compile(regex, opts, replace, func)
 
     local compiled
     local compile_once = (band(flags, FLAG_COMPILE_ONCE) == 1)
+    -- 如果需要缓存
     if compile_once then
+        -- replace为function
         if func then
+            --1.先根据编译选项查找字数组
             local subcache = regex_sub_func_cache[opts]
             if subcache then
                 -- print("cache hit!")
+                -- 2.再根据正则表达式查找编译结果
                 compiled = subcache[regex]
             end
 
         else
+            -- replace为string
+            --1.先根据编译选项查找字数组
             local subcache = regex_sub_str_cache[opts]
             if subcache then
+                --2.再根据正则表达式查找编译结果
                 local subsubcache = subcache[regex]
                 if subsubcache then
                     -- print("cache hit!")
+                    --3.再根据replace查找
                     compiled = subsubcache[replace]
                 end
             end
@@ -901,9 +987,11 @@ local function re_sub_compile(regex, opts, replace, func)
     -- compile the regex
 
     if compiled == nil then
+        -- 未命中，开始编译正则表达式
         -- print("compiled regex not found, compiling regex...")
         local errbuf = get_string_buf(MAX_ERR_MSG_LEN)
 
+        -- 编译正则表达式
         compiled = ngx_lua_ffi_compile_regex(regex, #regex, flags, pcre_opts,
                                              errbuf, MAX_ERR_MSG_LEN)
 
@@ -911,6 +999,7 @@ local function re_sub_compile(regex, opts, replace, func)
             return nil, ffi_string(errbuf)
         end
 
+        -- 添加析构函数
         ffi_gc(compiled, ngx_lua_ffi_destroy_regex)
 
         if func == nil then
@@ -970,6 +1059,7 @@ end
 _M.re_sub_compile = re_sub_compile
 
 
+-- replace是function
 local function re_sub_func_helper(subj, regex, replace, opts, global)
     local compiled, compile_once, flags =
                                     re_sub_compile(regex, opts, nil, replace)
@@ -1080,7 +1170,9 @@ local function re_sub_func_helper(subj, regex, replace, opts, global)
 end
 
 
+-- replace是string
 local function re_sub_str_helper(subj, regex, replace, opts, global)
+    -- 编译正则表达式
     local compiled, compile_once, flags =
                                     re_sub_compile(regex, opts, replace, nil)
     if not compiled then
@@ -1102,7 +1194,9 @@ local function re_sub_str_helper(subj, regex, replace, opts, global)
     local dst_len = 0
 
     while true do
+        -- 执行正则匹配
         local rc = ngx_lua_ffi_exec_regex(compiled, flags, subj, subj_len, pos)
+        -- 未匹配到
         if rc == PCRE_ERROR_NOMATCH then
             break
         end
@@ -1180,6 +1274,7 @@ local function re_sub_str_helper(subj, regex, replace, opts, global)
             end
         end
 
+        -- sub or gsub
         if not global then
             break
         end
@@ -1209,6 +1304,7 @@ local function re_sub_str_helper(subj, regex, replace, opts, global)
 end
 
 
+-- global: 是否为全局替换
 local function re_sub_helper(subj, regex, replace, opts, global)
     local repl_type = type(replace)
     if repl_type == "function" then
@@ -1223,11 +1319,15 @@ local function re_sub_helper(subj, regex, replace, opts, global)
 end
 
 
+-- syntax: newstr, n, err = ngx.re.sub(subject, regex, replace, options?)
+-- replace: 可以是string或function。function用来生成替换的string
+-- 返回： newstr替换后的新字符串； n: 成功替换的个数
 function ngx.re.sub(subj, regex, replace, opts)
     return re_sub_helper(subj, regex, replace, opts, false)
 end
 
 
+-- syntax: newstr, n, err = ngx.re.gsub(subject, regex, replace, options?)
 function ngx.re.gsub(subj, regex, replace, opts)
     return re_sub_helper(subj, regex, replace, opts, true)
 end

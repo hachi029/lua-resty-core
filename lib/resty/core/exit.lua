@@ -16,6 +16,7 @@ local co_yield = coroutine._yield
 local subsystem = ngx.config.subsystem
 
 
+-- C.ngx_http_lua_ffi_exit
 local ngx_lua_ffi_exit
 
 
@@ -41,6 +42,7 @@ local ERR_BUF_SIZE = 128
 local FFI_DONE = base.FFI_DONE
 
 
+-- syntax: ngx.exit(status)
 ngx.exit = function (rc)
     local err = get_string_buf(ERR_BUF_SIZE)
     local errlen = get_size_ptr()

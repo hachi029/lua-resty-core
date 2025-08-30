@@ -26,6 +26,7 @@ function _M.add_header(key, value)
 end
 
 
+-- syntax: ngx_resp.set_status(status, reason?)
 function _M.set_status(status, reason)
     local r = get_request()
 
@@ -45,6 +46,7 @@ function _M.set_status(status, reason)
 end
 
 
+-- syntax: ngx_resp.bypass_if_checks()
 function _M.bypass_if_checks()
     return bypass_if_checks()
 end

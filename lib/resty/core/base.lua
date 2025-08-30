@@ -37,19 +37,21 @@ else
           .. "ngx_stream_lua_module 0.0.16 required")
 end
 
-
+-- 推荐使用LuaJIT 2.1+
 if string.find(jit.version, " 2.0", 1, true) then
     ngx.log(ngx.ALERT, "use of lua-resty-core with LuaJIT 2.0 is ",
             "not recommended; use LuaJIT 2.1+ instead")
 end
 
-
+-- 支持创建一个 pre-sized table
 local ok, new_tab = pcall(require, "table.new")
 if not ok then
     new_tab = function (narr, nrec) return {} end
 end
 
 
+-- https://github.com/cloudflare/lua-resty-logger-socket/issues/2
+-- LuaJIT 实现了一个更高效clear table的方法。
 local clear_tab
 ok, clear_tab = pcall(require, "table.clear")
 if not ok then
@@ -187,6 +189,7 @@ function _M.get_size_ptr()
 end
 
 
+-- 获取str_buf。如果size>str_buf_size, 则创建一个，否则使用全局的str_buf
 function _M.get_string_buf(size, must_alloc)
     -- ngx.log(ngx.ERR, "str buf size: ", str_buf_size)
     if size > str_buf_size or must_alloc then
@@ -249,6 +252,7 @@ do
 
     ok, exdata = pcall(require, "thread.exdata")
     if ok and exdata then
+        -- get_request
         function _M.get_request()
             local r = exdata()
             if r ~= nil then

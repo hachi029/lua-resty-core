@@ -31,14 +31,23 @@ local FFI_DECLINED = base.FFI_DECLINED
 local subsystem = ngx.config.subsystem
 
 
+-- C.ngx_http_lua_ffi_shdict_get
 local ngx_lua_ffi_shdict_get
+-- C.ngx_http_lua_ffi_shdict_incr
 local ngx_lua_ffi_shdict_incr
+-- C.ngx_http_lua_ffi_shdict_store
 local ngx_lua_ffi_shdict_store
+-- C.ngx_http_lua_ffi_shdict_flush_all
 local ngx_lua_ffi_shdict_flush_all
+-- C.ngx_http_lua_ffi_shdict_get_ttl
 local ngx_lua_ffi_shdict_get_ttl
+-- C.ngx_http_lua_ffi_shdict_set_expire
 local ngx_lua_ffi_shdict_set_expire
+-- C.ngx_http_lua_ffi_shdict_capacity
 local ngx_lua_ffi_shdict_capacity
+-- C.ngx_http_lua_ffi_shdict_free_space
 local ngx_lua_ffi_shdict_free_space
+-- C.ngx_http_lua_ffi_shdict_udata_to_zone
 local ngx_lua_ffi_shdict_udata_to_zone
 
 
@@ -473,6 +482,7 @@ local function check_zone(zone)
         error("bad \"zone\" argument", 3)
     end
 
+    -- ngx_shm_zone_t
     zone = ngx_lua_ffi_shdict_udata_to_zone(zone)
     if zone == nil then
         error("bad \"zone\" argument", 3)
@@ -482,6 +492,8 @@ local function check_zone(zone)
 end
 
 
+-- 存储值， 不同的操作传递不同的op值
+-- set： op=0; safe_set: op=4; add: op=1; safe_add: op=5; replace: op=2
 local function shdict_store(zone, op, key, value, exptime, flags)
     zone = check_zone(zone)
 
@@ -539,6 +551,7 @@ local function shdict_store(zone, op, key, value, exptime, flags)
         return nil, "bad value type"
     end
 
+    -- set
     local rc = ngx_lua_ffi_shdict_store(zone, op, key, key_len,
                                         valtyp, str_val_buf,
                                         str_val_len, num_val,
@@ -556,36 +569,51 @@ local function shdict_store(zone, op, key, value, exptime, flags)
 end
 
 
+-- syntax: success, err, forcible = ngx.shared.DICT:set(key, value, exptime?, flags?)
+-- 无条件设置
+-- flags: 一个附加的uint32值，在get时可以随value取出
+-- forcible: 标识是否有其他item因为没有内存而被移除
 local function shdict_set(zone, key, value, exptime, flags)
     return shdict_store(zone, 0, key, value, exptime, flags)
 end
 
 
+-- syntax: ok, err = ngx.shared.DICT:safe_set(key, value, exptime?, flags?)
+-- 与set方法类似，但是当内存不足时，不会强制删除未过期的元素来释放空间
 local function shdict_safe_set(zone, key, value, exptime, flags)
     return shdict_store(zone, 0x0004, key, value, exptime, flags)
 end
 
 
+-- syntax: success, err, forcible = ngx.shared.DICT:add(key, value, exptime?, flags?)
+-- 与set方法类似，执行add_if_not_exists。 如果key已经存在，则返回 false, exists
 local function shdict_add(zone, key, value, exptime, flags)
     return shdict_store(zone, 0x0001, key, value, exptime, flags)
 end
 
 
+-- syntax: ok, err = ngx.shared.DICT:safe_add(key, value, exptime?, flags?)
+-- 与add方法类型，但是当内存不足时，不会强制删除未过期的元素来释放空间
 local function shdict_safe_add(zone, key, value, exptime, flags)
     return shdict_store(zone, 0x0005, key, value, exptime, flags)
 end
 
 
+-- syntax: success, err, forcible = ngx.shared.DICT:replace(key, value, exptime?, flags?)
+-- 与set方法类型，但是只有当key存在时，才会执行set操作。如果key不存在，返回 false,"not found"
 local function shdict_replace(zone, key, value, exptime, flags)
     return shdict_store(zone, 0x0002, key, value, exptime, flags)
 end
 
 
+-- syntax: ngx.shared.DICT:delete(key)
+-- Unconditionally removes the key-value pair
 local function shdict_delete(zone, key)
     return shdict_set(zone, key, nil)
 end
 
 
+-- ngx.shared.DICT.get
 local function shdict_get(zone, key)
     zone = check_zone(zone)
 
@@ -611,6 +639,7 @@ local function shdict_get(zone, key)
     local value_len = get_size_ptr()
     value_len[0] = size
 
+    -- get。注意get_stale传入的是0
     local rc = ngx_lua_ffi_shdict_get(zone, key, key_len, value_type,
                                       str_value_buf, value_len,
                                       num_value, user_flags, 0,
@@ -634,6 +663,7 @@ local function shdict_get(zone, key)
     local val
 
     if typ == 4 then -- LUA_TSTRING
+        -- 说明是c层申请的内存
         if str_value_buf[0] ~= buf then
             -- ngx.say("len: ", tonumber(value_len[0]))
             buf = str_value_buf[0]
@@ -661,6 +691,8 @@ local function shdict_get(zone, key)
 end
 
 
+-- syntax: value, flags, stale = ngx.shared.DICT:get_stale(key)
+-- stale： indicating whether the key has expired or not.
 local function shdict_get_stale(zone, key)
     zone = check_zone(zone)
 
@@ -686,6 +718,7 @@ local function shdict_get_stale(zone, key)
     local value_len = get_size_ptr()
     value_len[0] = size
 
+    -- get。注意get_stale传入的是1
     local rc = ngx_lua_ffi_shdict_get(zone, key, key_len, value_type,
                                       str_value_buf, value_len,
                                       num_value, user_flags, 1,
@@ -735,6 +768,10 @@ local function shdict_get_stale(zone, key)
 end
 
 
+-- syntax: newval, err, forcible? = ngx.shared.DICT:incr(key, value, init?, init_ttl?)
+-- 对key的number值增加value
+-- init: 如果key不存在，init未设置则返回nil, 'not found'; init 为number，则创建一项，value为init+value
+-- init_ttl: 作为初始的ttl, 如果key已经存在，则此值无效
 local function shdict_incr(zone, key, value, init, init_ttl)
     zone = check_zone(zone)
 
@@ -808,6 +845,7 @@ local function shdict_incr(zone, key, value, init, init_ttl)
 end
 
 
+-- syntax: ngx.shared.DICT:flush_all()
 local function shdict_flush_all(zone)
     zone = check_zone(zone)
 
@@ -815,6 +853,7 @@ local function shdict_flush_all(zone)
 end
 
 
+-- syntax: ttl, err = ngx.shared.DICT:ttl(key)
 local function shdict_ttl(zone, key)
     zone = check_zone(zone)
 
@@ -845,6 +884,7 @@ local function shdict_ttl(zone, key)
 end
 
 
+-- syntax: success, err = ngx.shared.DICT:expire(key, exptime)
 local function shdict_expire(zone, key, exptime)
     zone = check_zone(zone)
 
@@ -882,6 +922,7 @@ local function shdict_expire(zone, key, exptime)
 end
 
 
+-- syntax: capacity_bytes = ngx.shared.DICT:capacity()
 local function shdict_capacity(zone)
     zone = check_zone(zone)
 
@@ -889,6 +930,7 @@ local function shdict_capacity(zone)
 end
 
 
+-- syntax: free_page_bytes = ngx.shared.DICT:free_space()
 local shdict_free_space
 if ngx_lua_ffi_shdict_free_space then
     shdict_free_space = function (zone)

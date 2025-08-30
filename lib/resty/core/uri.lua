@@ -58,6 +58,8 @@ elseif subsystem == "stream" then
 end
 
 
+-- ngx.escape_uri
+-- syntax: newstr = ngx.escape_uri(str)
 ngx.escape_uri = function (s, esc_type)
     if type(s) ~= 'string' then
         if not s then
@@ -94,6 +96,8 @@ ngx.escape_uri = function (s, esc_type)
 end
 
 
+-- ngx.unescape_uri
+-- syntax: newstr = ngx.unescape_uri(str)
 ngx.unescape_uri = function (s)
     if type(s) ~= 'string' then
         if not s then

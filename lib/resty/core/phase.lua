@@ -34,6 +34,7 @@ local context_names = {
 }
 
 
+-- syntax: str = ngx.get_phase()
 function ngx.get_phase()
     local r = get_request()
 
@@ -57,6 +58,7 @@ end
 
 
 function ngx.get_raw_phase(r)
+    -- ctx->context
     local context = C.ngx_http_lua_ffi_get_phase(r, errmsg)
     if context == FFI_ERROR then -- NGX_ERROR
         error(errmsg, 2)

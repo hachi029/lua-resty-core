@@ -28,17 +28,21 @@ local subsystem = ngx.config.subsystem
 
 
 local ngx_lua_ffi_get_resp_status
+-- C.ngx_http_lua_ffi_get_conf_env
 local ngx_lua_ffi_get_conf_env
 local ngx_magic_key_getters
 local ngx_magic_key_setters
 
 
 local _M = new_tab(0, 3)
+-- ngx的元表
 local ngx_mt = new_tab(0, 2)
 
 
 if subsystem == "http" then
+    -- ngx的元表__index会查询此表， 参考 ngx_mt.__index
     ngx_magic_key_getters = new_tab(0, 4)
+    -- ngx的元表__newindex会查询此表， 参考ngx_mt.__newindex
     ngx_magic_key_setters = new_tab(0, 2)
 
 elseif subsystem == "stream" then
@@ -59,6 +63,7 @@ end
 _M.register_ngx_magic_key_setter = register_setter
 
 
+-- ngx的元表__index方法
 ngx_mt.__index = function (tb, key)
     local f = ngx_magic_key_getters[key]
     if f then
@@ -67,7 +72,7 @@ ngx_mt.__index = function (tb, key)
     return rawget(tb, key)
 end
 
-
+-- ngx的元表__newindex方法
 ngx_mt.__newindex = function (tb, key, ctx)
     local f = ngx_magic_key_setters[key]
     if f then
@@ -77,6 +82,7 @@ ngx_mt.__newindex = function (tb, key, ctx)
 end
 
 
+-- 设置ngx的元表
 setmetatable(ngx, ngx_mt)
 
 
@@ -123,6 +129,7 @@ if subsystem == "http" then
     -- ngx.is_subrequest
 
 
+    -- syntax: value = ngx.is_subrequest
     local function is_subreq()
         local r = get_request()
 
@@ -144,6 +151,7 @@ if subsystem == "http" then
     -- ngx.headers_sent
 
 
+    -- ngx.headers_sent 响应头是否已经发送了
     local function headers_sent()
         local r = get_request()
 
@@ -151,6 +159,7 @@ if subsystem == "http" then
             error("no request found")
         end
 
+        -- r->header_sent
         local rc = C.ngx_http_lua_ffi_headers_sent(r)
 
         if rc == FFI_NO_REQ_CTX then
@@ -163,6 +172,7 @@ if subsystem == "http" then
 
         return rc == 1
     end
+    -- ngx.headers_sent
     register_getter("headers_sent", headers_sent)
 
 
@@ -175,6 +185,7 @@ if subsystem == "http" then
             error("no request found")
         end
 
+        -- r->internal
         local rc = C.ngx_http_lua_ffi_req_is_internal(r)
 
         if rc == FFI_BAD_CONTEXT then
@@ -215,6 +226,7 @@ local function get_status()
 
     return rc
 end
+-- 注入ngx.status
 register_getter("status", get_status)
 
 
@@ -235,6 +247,7 @@ do
         env_ptr[0] = get_string_buf(size)
         local name_len_ptr = get_size_ptr()
 
+        -- C.ngx_http_lua_ffi_get_conf_env
         local rc = ngx_lua_ffi_get_conf_env(name, env_ptr, name_len_ptr)
         if rc == FFI_OK then
             return ffi_str(env_ptr[0] + name_len_ptr[0] + 1)

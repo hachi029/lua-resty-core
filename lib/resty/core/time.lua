@@ -71,12 +71,14 @@ void ngx_stream_lua_ffi_update_time(void);
 end
 
 
+-- syntax: secs = ngx.now()
 function ngx.now()
     local now = tonumber(ngx_lua_ffi_now())
     return now
 end
 
 
+-- syntax: secs = ngx.time()
 function ngx.time()
     local time = tonumber(ngx_lua_ffi_time())
     return time
@@ -97,11 +99,13 @@ local function monotonic_time()
 end
 
 
+-- syntax: ngx.update_time()
 function ngx.update_time()
     ngx_lua_ffi_update_time()
 end
 
 
+-- syntax: str = ngx.today()
 function ngx.today()
     -- the format of today is 2010-11-19
     local today_buf_size = 10
@@ -111,6 +115,8 @@ function ngx.today()
 end
 
 
+-- syntax: str = ngx.localtime()
+-- Returns the current time stamp (in the format yyyy-mm-dd hh:mm:ss) of the nginx cached time
 function ngx.localtime()
     -- the format of localtime is 2010-11-19 20:56:31
     local localtime_buf_size = 19

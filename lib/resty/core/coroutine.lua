@@ -12,6 +12,7 @@ do
             local r = get_request()
             if r ~= nil then
                 local ctx = get_raw_phase(r)
+                -- REWRITE and ACCESS
                 if ctx ~= 0x020 and ctx ~= 0x040 then
                     return ours(...)
                 end
