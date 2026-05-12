@@ -22,6 +22,7 @@ local type = type
 local subsystem = ngx.config.subsystem
 
 
+-- 获取ngx.ctx 在ctxs数组中的的索引值
 local ngx_lua_ffi_get_ctx_ref
 local ngx_lua_ffi_set_ctx_ref
 
@@ -55,6 +56,7 @@ local _M = {
 
 -- use a new ctxs table to make LuaJIT JIT compiler happy to generate more
 -- efficient machine code.
+-- 全局表，存放所有的ngx.ctx表。每个request对应的ctx在ctxs中的索引存放在ngx_http_lua_ctx_t的ctx_ref中
 local ctxs = {}
 registry.ngx_lua_ctx_tables = ctxs
 
@@ -64,7 +66,9 @@ do
     local in_ssl_phase = ffi.new("int[1]")
     local ssl_ctx_ref = ffi.new("int[1]")
 
-    -- 返回ngx.ctx。 ctx应该是nil
+    -- 当获取ngx.ctx时会执行到ngx表的__index方法，进而执行到此。返回ngx.ctx。 ctx应该是nil
+    -- https://github.com/openresty/lua-resty-core#get_ctx_table
+    -- ctx: use the ctx from caller instead of creating a new table
     function get_ctx_table(ctx)
         local r = get_request()
 
@@ -72,28 +76,33 @@ do
             error("no request found")
         end
 
-        -- 获取ctx在本文件ctxs中的索引，这个索引存储在ngx_http_lua_ctx_t的ctx_ref中
+        -- 获取ctx在本文件ctxs中的索引，这个索引存储在ngx_http_lua_ctx_t的ctx_ref中, in_ssl_phase和ssl_ctx_ref是出参
         local ctx_ref = ngx_lua_ffi_get_ctx_ref(r, in_ssl_phase, ssl_ctx_ref)
         if ctx_ref == FFI_NO_REQ_CTX then
             error("no request ctx found")
         end
 
-        -- 小于0表示还没有创建
+        -- (一个请求首次获取ctx时为-2， 此后再次获取为一个正值)小于0表示还没有创建
         if ctx_ref < 0 then
-            ctx_ref = ssl_ctx_ref[0]
+            ctx_ref = ssl_ctx_ref[0]    -- ssl阶段创建的ctx
             if ctx_ref > 0 and ctxs[ctx_ref] then
-                if in_ssl_phase[0] ~= 0 then
+                -- 此处说明ssl阶段已经创建了ngx.ctx表
+                if in_ssl_phase[0] ~= 0 then    --仍在ssl*阶段
                     return ctxs[ctx_ref]
                 end
 
+                -- 非ssl阶段
                 if not ctx then
                     ctx = new_tab(0, 4)
                 end
 
+                -- 设置当前阶段新建的ctx的元表为ssl阶段创建的ctx
                 ctx = setmetatable(ctx, ctxs[ctx_ref])
 
             else
+                -- 说明ssl阶段也没还没创建ngx.ctx
                 if in_ssl_phase[0] ~= 0 then
+                    -- 正处于ssl*阶段
                     if not ctx then
                         ctx = new_tab(1, 4)
                     end
@@ -107,7 +116,7 @@ do
                 end
             end
 
-            --将ctx放入ctxs数组中，返回在数组中的index
+            --将新创建的ctx放入ctxs数组中，返回在数组中的index
             ctx_ref = ref_in_table(ctxs, ctx)
             if ngx_lua_ffi_set_ctx_ref(r, ctx_ref) ~= FFI_OK then
                 return nil
@@ -118,8 +127,8 @@ do
     end
 end
 -- 参考ngx的元表__index方法
-register_getter("ctx", get_ctx_table)
-_M.get_ctx_table = get_ctx_table
+register_getter("ctx", get_ctx_table)   -- 注册ngx.ctx
+_M.get_ctx_table = get_ctx_table             --注册方法resty.core.ctx.get_ctx_table
 
 
 local function set_ctx_table(ctx)

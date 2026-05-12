@@ -98,6 +98,9 @@ local function var_get(self, name)
     -- ngx.log(ngx.WARN, "rc = ", rc)
 
     if rc == 0 then -- NGX_OK
+        -- https://luajit.org/ext_ffi_api.html
+        -- str = ffi.string(ptr [,len])
+        -- The Lua string is an (interned) copy of the data and bears no relation to the original data area anymore.
         return ffi_str(value_ptr[0], value_len[0])
     end
 

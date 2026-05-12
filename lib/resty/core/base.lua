@@ -205,10 +205,14 @@ function _M.get_string_buf(size, must_alloc)
 end
 
 
+-- https://zhuanlan.zhihu.com/p/97322052
+-- ref_in_table(ctxs, ctx) 将ctx放入ctxs中，并返回ctx在ctxs的索引
+-- 解引用参考请求结束时的回调函数 ngx_http_lua_ngx_ctx_cleanup
 function _M.ref_in_table(tb, key)
     if key == nil then
         return -1
     end
+    -- 获取idx=0处的元素 ref = tb[0]
     local ref = tb[FREE_LIST_REF]
     if ref and ref ~= 0 then
          tb[FREE_LIST_REF] = tb[ref]

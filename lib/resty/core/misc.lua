@@ -30,7 +30,10 @@ local subsystem = ngx.config.subsystem
 local ngx_lua_ffi_get_resp_status
 -- C.ngx_http_lua_ffi_get_conf_env
 local ngx_lua_ffi_get_conf_env
+-- 当执行ngx.xx会查找ngx_magic_key_getters中的getter方法
+-- ctx、status、is_subrequest、headers_sent
 local ngx_magic_key_getters
+-- 当执行ngx.xx=yy会查找ngx_magic_key_setters中的setter方法
 local ngx_magic_key_setters
 
 
@@ -51,6 +54,7 @@ elseif subsystem == "stream" then
 end
 
 
+-- 向ngx表注册get方法
 local function register_getter(key, func)
     ngx_magic_key_getters[key] = func
 end

@@ -93,6 +93,7 @@ function _M.set_filter_level(level)
     local rc = ngx_lua_ffi_errlog_set_filter_level(level, err, errlen)
 
     if rc == FFI_ERROR then
+        -- ffi: 复制内存，转成一个lua的string
         return nil, ffi_string(err, errlen[0])
     end
 
